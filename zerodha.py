@@ -82,12 +82,13 @@ def compute_period_pnl(ws, week_start, month_start):
         try:
             rdate = dt.datetime.strptime(row["Date"], "%Y-%m-%d").date()
             total = float(row.get("Total", 0) or 0)
+            realized = float(row.get("Realized", 0) or 0)
             if rdate == today:
                 today_total += total
             if rdate >= week_start:
-                week_total += total
+                week_total += realized
             if rdate >= month_start:
-                month_total += total
+                month_total += realized
         except Exception:
             continue
     return today_total, week_total, month_total
