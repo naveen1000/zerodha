@@ -11,23 +11,35 @@ GSHEET_SERVICE_KEY = "gsheet_service_key.json"
 GSHEET_NAME = "Apps Associates"
 CONFIG_SHEET = "config"     # tab where access token is stored
 ACCESS_TOKEN_CELL = "G2"
+TELEGRAM_BOT_TOKEN_CELL = "H2"  # cell where Telegram bot token is stored
+TELEGRAM_CHAT_ID_CELL = "H3"    # cell where Telegram chat ID is stored
 JOURNAL_SHEET = "Zerodha_PnL"   # this sheet will be created if missing
-
-TELEGRAM_BOT_TOKEN = "1228033872:AAHsI3oFOQLKVC7mmnVH0bNyQuPGitiBEXQ"
-TELEGRAM_CHAT_ID = "582942300"
 # ===================================
 
-def get_access_token_from_sheet():
+def get_config_from_sheet():
     gc = gspread.service_account(filename=GSHEET_SERVICE_KEY)
     sh = gc.open(GSHEET_NAME)
     try:
         ws = sh.worksheet(CONFIG_SHEET)
     except gspread.exceptions.WorksheetNotFound:
         raise Exception(f"Config sheet '{CONFIG_SHEET}' not found in {GSHEET_NAME}")
+    
+    # Get access token
     token = ws.acell(ACCESS_TOKEN_CELL).value
     if not token:
         raise Exception(f"No access token found in sheet cell {ACCESS_TOKEN_CELL}. Run zerodha_auth_server first.")
-    return token.strip(), sh
+    
+    # Get Telegram bot token
+    bot_token = ws.acell(TELEGRAM_BOT_TOKEN_CELL).value
+    if not bot_token:
+        raise Exception(f"No Telegram bot token found in sheet cell {TELEGRAM_BOT_TOKEN_CELL}. Please add it to the config sheet.")
+    
+    # Get Telegram chat ID
+    chat_id = ws.acell(TELEGRAM_CHAT_ID_CELL).value
+    if not chat_id:
+        raise Exception(f"No Telegram chat ID found in sheet cell {TELEGRAM_CHAT_ID_CELL}. Please add it to the config sheet.")
+    
+    return token.strip(), bot_token.strip(), chat_id.strip(), sh
 
 def get_positions(access_token):
     kite = KiteConnect(api_key=API_KEY)
@@ -93,12 +105,12 @@ def compute_period_pnl(ws, week_start, month_start):
             continue
     return today_total, week_total, month_total
 
-async def send_to_telegram(msg):
-    bot = Bot(token=TELEGRAM_BOT_TOKEN)
-    await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=msg, parse_mode="HTML")
+async def send_to_telegram(msg, bot_token, chat_id):
+    bot = Bot(token=bot_token)
+    await bot.send_message(chat_id=chat_id, text=msg, parse_mode="HTML")
 
 def main():
-    access_token, sh = get_access_token_from_sheet()
+    access_token, bot_token, chat_id, sh = get_config_from_sheet()
     pos = get_positions(access_token)
     realized, unrealized = compute_pnl_from_positions(pos)
     total = realized + unrealized
@@ -125,7 +137,7 @@ def main():
 
 🧾 Logged on: {today.strftime('%d %b %Y')}
 """
-    asyncio.run(send_to_telegram(msg.strip()))
+    asyncio.run(send_to_telegram(msg.strip(), bot_token, chat_id))
     print("✅ Sent to Telegram")
 
 if __name__ == "__main__":
