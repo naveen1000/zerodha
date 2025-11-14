@@ -1,6 +1,8 @@
 # zerodha_auth_server.py
 import os
 import webbrowser
+import threading
+import time
 from flask import Flask, request, redirect
 from kiteconnect import KiteConnect
 import gspread
@@ -78,10 +80,68 @@ def zerodha_callback():
 if __name__ == "__main__":
     kite = KiteConnect(api_key=API_KEY)
     kite.redirect_uri = REDIRECT_URI
-    print("Open this URL in your browser to login and authorize the app:")
-    print(kite.login_url())
-    try:
-        webbrowser.open(kite.login_url())
-    except Exception:
-        pass
-    app.run(host="127.0.0.1", port=5000, debug=False)
+
+    # Start the Flask server in a background thread so we can drive a browser (selenium)
+    def run_server():
+        # disable reloader to avoid double-starts when threading
+        app.run(host="127.0.0.1", port=5000, debug=False, use_reloader=False)
+
+    server_thread = threading.Thread(target=run_server, daemon=True)
+    server_thread.start()
+
+    # Wait a short moment for the server to bind
+    time.sleep(0.8)
+
+    use_selenium = os.environ.get('USE_SELENIUM_AUTOLOGIN', '').lower() in ('1', 'true', 'yes')
+    if use_selenium:
+        # Try to import selenium helper and run it. This keeps the original server/token
+        # exchange logic intact (Flask will receive the redirect and exchange the token).
+        try:
+            from selenium_auto_login import automate_kite_login
+        except Exception as e:
+            print('Selenium autologin requested but failed to import selenium_auto_login:', e)
+            print('Falling back to printing the login URL. Set up the module or run without USE_SELENIUM_AUTOLOGIN.')
+            print(kite.login_url())
+            # keep main thread alive
+            server_thread.join()
+            raise SystemExit(1)
+
+        # Read credentials from env for the automated flow
+        zk_user = os.environ.get('ZERODHA_USER')
+        zk_pass = os.environ.get('ZERODHA_PASSWORD')
+        gmail = os.environ.get('GMAIL_EMAIL')
+        api_key = API_KEY
+        redirect_uri = REDIRECT_URI
+
+        if not (zk_user and zk_pass and gmail):
+            print('Missing ZERODHA_USER / ZERODHA_PASSWORD / GMAIL_EMAIL environment variables required for selenium autologin.')
+            print('Falling back to manual login URL:')
+            print(kite.login_url())
+            server_thread.join()
+            raise SystemExit(1)
+
+        print('Starting Selenium automated login...')
+        try:
+            success = automate_kite_login(zk_user, zk_pass, gmail, api_key=api_key, redirect_uri=redirect_uri, headless=False)
+            print('Selenium autologin returned:', success)
+        except Exception as e:
+            print('Selenium autologin failed:', e)
+            print('Open the URL manually to continue:')
+            print(kite.login_url())
+
+        # Keep process alive to let Flask receive the redirect and complete token exchange.
+        print('Waiting for callback to complete... (server running on http://127.0.0.1:5000)')
+        try:
+            server_thread.join()
+        except KeyboardInterrupt:
+            pass
+    else:
+        # Default: print/open login URL and serve callback
+        print("Open this URL in your browser to login and authorize the app:")
+        print(kite.login_url())
+        try:
+            webbrowser.open(kite.login_url())
+        except Exception:
+            pass
+        # foreground run
+        app.run(host="127.0.0.1", port=5000, debug=False)

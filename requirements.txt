@@ -1,0 +1,6 @@
+selenium>=4.8.0
+webdriver-manager>=3.8.5
+kiteconnect>=3.0.0
+google-api-python-client>=2.70.0
+google-auth-httplib2>=0.1.0
+google-auth-oauthlib>=0.7.1
