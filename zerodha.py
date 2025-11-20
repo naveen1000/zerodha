@@ -7,12 +7,12 @@ from telegram import Bot
 
 # ========== CONFIG - EDIT ==========
 API_KEY = "d6k2z8ev4jj41bm1"           # same API_KEY you used above
-GSHEET_SERVICE_KEY = "gsheet_service_key.json"
+GSHEET_SERVICE_KEY = "/home/ubuntu/Desktop/zerodha/gsheet_service_key.json"
 GSHEET_NAME = "Apps Associates"
 CONFIG_SHEET = "config"     # tab where access token is stored
 ACCESS_TOKEN_CELL = "G2"
-TELEGRAM_BOT_TOKEN_CELL = "H2"  # cell where Telegram bot token is stored
-TELEGRAM_CHAT_ID_CELL = "H3"    # cell where Telegram chat ID is stored
+TELEGRAM_BOT_TOKEN_CELL = "8332447645:AAFMiAN6nYCzAWf0U6mDhlbC1Tl2_oPLi2A" #"H2"  # cell where Telegram bot token is stored
+TELEGRAM_CHAT_ID_CELL = "582942300" #"H3"    # cell where Telegram chat ID is stored
 JOURNAL_SHEET = "Zerodha_PnL"   # this sheet will be created if missing
 # ===================================
 
@@ -30,12 +30,12 @@ def get_config_from_sheet():
         raise Exception(f"No access token found in sheet cell {ACCESS_TOKEN_CELL}. Run zerodha_auth_server first.")
     
     # Get Telegram bot token
-    bot_token = ws.acell(TELEGRAM_BOT_TOKEN_CELL).value
+    bot_token = TELEGRAM_BOT_TOKEN_CELL #ws.acell(TELEGRAM_BOT_TOKEN_CELL).value
     if not bot_token:
         raise Exception(f"No Telegram bot token found in sheet cell {TELEGRAM_BOT_TOKEN_CELL}. Please add it to the config sheet.")
     
     # Get Telegram chat ID
-    chat_id = ws.acell(TELEGRAM_CHAT_ID_CELL).value
+    chat_id = TELEGRAM_CHAT_ID_CELL #ws.acell(TELEGRAM_CHAT_ID_CELL).value
     if not chat_id:
         raise Exception(f"No Telegram chat ID found in sheet cell {TELEGRAM_CHAT_ID_CELL}. Please add it to the config sheet.")
     
@@ -55,10 +55,22 @@ def compute_pnl_from_positions(pos):
     realized = 0.0
     unrealized = 0.0
     net_positions = pos.get("net", [])
+    
     for p in net_positions:
-        # keys: 'realised' and 'unrealised' (note spelling)
-        realized += float(p.get("realised", 0) or 0)
-        unrealized += float(p.get("unrealised", 0) or 0)
+        qty = int(p.get("quantity", 0))
+        
+        if qty == 0:
+            # Position fully closed
+            # Realised Profit = pnl (Zerodha's total P&L for this position)
+            # Unrealised Profit = 0 (Ignore 'unrealised' field as it's not reset)
+            realized += float(p.get("pnl", 0) or 0)
+        else:
+            # Position still open
+            # Realised Profit = realised (P&L from partial exits)
+            # Unrealised Profit = m2m (MTM for the open part)
+            realized += float(p.get("realised", 0) or 0)
+            unrealized += float(p.get("m2m", 0) or 0)
+            
     return realized, unrealized
 
 def ensure_journal_sheet(sh):
@@ -87,23 +99,21 @@ def log_pnl_to_sheet(sh, realized, unrealized, total):
 def compute_period_pnl(ws, week_start, month_start):
     data = ws.get_all_records()
     if not data:
-        return 0.0, 0.0, 0.0
+        return 0.0, 0.0
     today = dt.date.today()
-    today_total = week_total = month_total = 0.0
+    week_realized = month_realized = 0.0
     for row in data:
         try:
             rdate = dt.datetime.strptime(row["Date"], "%Y-%m-%d").date()
-            total = float(row.get("Total", 0) or 0)
             realized = float(row.get("Realized", 0) or 0)
-            if rdate == today:
-                today_total += total
+            
             if rdate >= week_start:
-                week_total += realized
+                week_realized += realized
             if rdate >= month_start:
-                month_total += realized
+                month_realized += realized
         except Exception:
             continue
-    return today_total, week_total, month_total
+    return week_realized, month_realized
 
 async def send_to_telegram(msg, bot_token, chat_id):
     bot = Bot(token=bot_token)
@@ -112,6 +122,7 @@ async def send_to_telegram(msg, bot_token, chat_id):
 def main():
     access_token, bot_token, chat_id, sh = get_config_from_sheet()
     pos = get_positions(access_token)
+    print(pos)
     realized, unrealized = compute_pnl_from_positions(pos)
     total = realized + unrealized
 
@@ -123,17 +134,17 @@ def main():
     week_start = today - dt.timedelta(days=today.weekday())
     month_start = today.replace(day=1)
     ws = sh.worksheet(JOURNAL_SHEET)
-    t_today, t_week, t_month = compute_period_pnl(ws, week_start, month_start)
+    week_realized, month_realized = compute_period_pnl(ws, week_start, month_start)
 
     msg = f"""
 📊 <b>Zerodha P&L Report</b>
 
-🗓️ <b>Today:</b> ₹{round(t_today,2)}
-📅 <b>Week (Mon→Today):</b> ₹{round(t_week,2)}
-📆 <b>Month (1st→Today):</b> ₹{round(t_month,2)}
+🗓️ <b>Today:</b> ₹{round(total, 2)}
+  💰 Realized: ₹{round(realized, 2)}
+  💤 Unrealized: ₹{round(unrealized, 2)}
 
-💰 <b>Realized:</b> ₹{round(realized,2)}
-💤 <b>Unrealized:</b> ₹{round(unrealized,2)}
+📅 <b>Week (Realized):</b> ₹{round(week_realized, 2)}
+📆 <b>Month (Realized):</b> ₹{round(month_realized, 2)}
 
 🧾 Logged on: {today.strftime('%d %b %Y')}
 """

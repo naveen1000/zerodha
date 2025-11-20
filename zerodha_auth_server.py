@@ -4,6 +4,8 @@ import webbrowser
 import threading
 import time
 from flask import Flask, request, redirect
+import requests
+from werkzeug.serving import make_server
 from kiteconnect import KiteConnect
 import gspread
 import datetime as dt
@@ -19,7 +21,14 @@ ACCESS_TOKEN_CELL = "G2"  # cell where access_token will be written
 # =========================================
 
 app = Flask(__name__)
+server = None  # Will hold the werkzeug server instance
+shutdown_event = threading.Event()  # Signal to shutdown server
 
+def notify(msg):
+    url='https://api.telegram.org/bot1193312817:AAGTRlOs3YZHFeDSO_33YTwwewrEaMbLizE/sendMessage?chat_id=582942300&parse_mode=Markdown&text='+msg
+    requests.get(url)
+    print("notified")
+    
 def save_access_token_to_sheet(token_response):
     """
     token_response: dict returned by KiteConnect.generate_session(...)
@@ -41,6 +50,7 @@ def save_access_token_to_sheet(token_response):
     ws.update(range_name=ACCESS_TOKEN_CELL, values=[[access_token]])
     ws.update(range_name="G3", values=[[str(dt.datetime.now())]])
     print("✅ Access token written to sheet.")
+    shutdown_event.set()  # Signal server to shutdown
     return True
 
 @app.route("/")
@@ -84,7 +94,11 @@ if __name__ == "__main__":
     # Start the Flask server in a background thread so we can drive a browser (selenium)
     def run_server():
         # disable reloader to avoid double-starts when threading
-        app.run(host="127.0.0.1", port=5000, debug=False, use_reloader=False)
+        global server
+        server = make_server("127.0.0.1", 5000, app)
+        while not shutdown_event.is_set():
+            server.handle_request()
+        print("Server shutting down...")
 
     server_thread = threading.Thread(target=run_server, daemon=True)
     server_thread.start()
@@ -124,16 +138,22 @@ if __name__ == "__main__":
         try:
             success = automate_kite_login(zk_user, zk_pass, gmail, api_key=api_key, redirect_uri=redirect_uri, headless=False)
             print('Selenium autologin returned:', success)
+            notify("Selenium autologin returned: " + str(success))
         except Exception as e:
             print('Selenium autologin failed:', e)
             print('Open the URL manually to continue:')
             print(kite.login_url())
 
-        # Keep process alive to let Flask receive the redirect and complete token exchange.
-        print('Waiting for callback to complete... (server running on http://127.0.0.1:5000)')
+        # Wait for token to be written and server to signal shutdown
+        print('Waiting for callback to complete...')
+        server_thread.join(timeout=10)  # Wait max 10 seconds
+        print('✅ Token authentication complete. Exiting.')
+        
+        # Close any open browser windows (best effort)
         try:
-            server_thread.join()
-        except KeyboardInterrupt:
+            import subprocess
+            subprocess.run(['pkill', '-f', 'chrome|firefox|chromium'], stderr=subprocess.DEVNULL)
+        except Exception:
             pass
     else:
         # Default: print/open login URL and serve callback
@@ -143,5 +163,9 @@ if __name__ == "__main__":
             webbrowser.open(kite.login_url())
         except Exception:
             pass
-        # foreground run
-        app.run(host="127.0.0.1", port=5000, debug=False)
+        # Keep the background server running - don't start a second one!
+        print('Server running on http://127.0.0.1:5000')
+        try:
+            server_thread.join()
+        except KeyboardInterrupt:
+            pass

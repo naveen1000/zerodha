@@ -289,7 +289,7 @@ def automate_kite_login(username, password, gmail_email, api_key=None, redirect_
     else:
         raise ValueError('api_key is required to build Kite login URL')
 
-    chrome_opts = Options()
+    '''chrome_opts = Options()
     if headless:
         chrome_opts.add_argument('--headless=new')
     chrome_opts.add_argument('--no-sandbox')
@@ -298,8 +298,17 @@ def automate_kite_login(username, password, gmail_email, api_key=None, redirect_
     ser = Service("D:\\projects\\Wapp\\chromedriver.exe")
     chrome_opts.add_argument(CHROME_DATA_PATH)
     chrome_opts.add_argument('--profile-directory=Profile 1')
+    driver = webdriver.Chrome(service=ser, options=chrome_opts)'''''
 
-    driver = webdriver.Chrome(service=ser, options=chrome_opts)
+    options = webdriver.ChromeOptions()
+    CHROME_USER_DATA_PATH = "/home/ubuntu/snap/chromium/common/chromium"
+    PROFILE_DIRECTORY = "Profile 1"
+    options.add_argument(f"user-data-dir={CHROME_USER_DATA_PATH}")
+    options.add_argument(f"--profile-directory={PROFILE_DIRECTORY}")
+    options.binary_location = "/usr/bin/chromium-browser"
+    service = Service("/usr/bin/chromedriver")
+    driver = webdriver.Chrome(service=service, options=options)
+
     try:
         driver.get(login_url)
 
